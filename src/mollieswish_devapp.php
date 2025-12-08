@@ -2,21 +2,21 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
-function molliebelfius_devapp_config()
+function mollieswish_devapp_config()
 {
     $config = mollie_config();
 
     $config = array_merge($config, array(
         'FriendlyName' => array(
             'Type' => 'System',
-            'Value' => 'Mollie Belfius Pay Button'
+            'Value' => 'Mollie Swish'
         )
     ));
 
     return $config;
 }
 
-function molliebelfius_devapp_link($params)
+function mollieswish_devapp_link($params)
 {
-    return mollie_link($params, \Mollie\Api\Types\PaymentMethod::BELFIUS);
+    return mollie_link($params, \Mollie\Api\Types\PaymentMethod::SWISH);
 }

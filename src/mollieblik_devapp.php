@@ -2,21 +2,21 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
-function molliegiropay_devapp_config()
+function mollieblik_devapp_config()
 {
     $config = mollie_config();
 
     $config = array_merge($config, array(
         'FriendlyName' => array(
             'Type' => 'System',
-            'Value' => 'Mollie Giropay'
+            'Value' => 'Mollie BLIK'
         )
     ));
 
     return $config;
 }
 
-function molliegiropay_devapp_link($params)
+function mollieblik_devapp_link($params)
 {
-    return mollie_link($params, \Mollie\Api\Types\PaymentMethod::GIROPAY);
+    return mollie_link($params, \Mollie\Api\Types\PaymentMethod::BLIK);
 }
