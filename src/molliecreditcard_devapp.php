@@ -2,6 +2,11 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
+function molliecreditcard_devapp_MetaData()
+{
+    return mollie_metadata('Mollie Credit Card');
+}
+
 function molliecreditcard_devapp_config()
 {
     $config = mollie_config();

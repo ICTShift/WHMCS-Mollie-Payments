@@ -2,6 +2,11 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
+function molliecheckout_devapp_MetaData()
+{
+    return mollie_metadata('Mollie Checkout');
+}
+
 function molliecheckout_devapp_config()
 {
     $config = mollie_config();

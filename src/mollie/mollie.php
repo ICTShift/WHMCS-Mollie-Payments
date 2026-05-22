@@ -4,6 +4,14 @@ use WHMCS\Database\Capsule;
 
 require_once __DIR__ . '/vendor/autoload.php';
 
+function mollie_metadata($displayName)
+{
+    return array(
+        'DisplayName' => $displayName,
+        'APIVersion' => '1.1',
+    );
+}
+
 function mollie_config()
 {
     return array(

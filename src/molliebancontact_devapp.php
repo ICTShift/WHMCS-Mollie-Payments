@@ -2,6 +2,11 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
+function molliebancontact_devapp_MetaData()
+{
+    return mollie_metadata('Mollie Bancontact');
+}
+
 function molliebancontact_devapp_config()
 {
     $config = mollie_config();

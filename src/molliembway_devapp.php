@@ -2,6 +2,11 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
+function molliembway_devapp_MetaData()
+{
+    return mollie_metadata('Mollie MB WAY');
+}
+
 function molliembway_devapp_config()
 {
     $config = mollie_config();

@@ -2,6 +2,11 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
+function mollieprzelewy24_devapp_MetaData()
+{
+    return mollie_metadata('Mollie Przelewy24');
+}
+
 function mollieprzelewy24_devapp_config()
 {
     $config = mollie_config();

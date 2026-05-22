@@ -23,6 +23,11 @@ The changes below were contributed by [ICT Shift](https://www.ictshift.com/) to 
 - **Added setup and testing notes for next-gen webhooks.**  
   A dedicated setup guide now documents the WHMCS and Mollie dashboard steps, and a small CLI simulator can generate or send signed next-gen payment webhook payloads for local verification.
 
+### Changed – Apps & Integrations Display Names (`src/*_devapp.php`, `src/mollie/mollie.php`)
+
+- **Added WHMCS gateway metadata display names for all Mollie gateway wrappers.**  
+  WHMCS Apps & Integrations previously fell back to the raw module filenames such as `Mollieideal Devapp`. Each gateway wrapper now exposes a `_MetaData()` function with a proper `DisplayName`, so the cards can show cleaner names like `Mollie iDEAL` and `Mollie Apple Pay`.
+
 ### Fixed – WHMCS 9.x Compatibility (`src/mollie/mollie.php`, `src/mollie/callback.php`)
 
 - **Migrated all database calls to `WHMCS\Database\Capsule`.**  

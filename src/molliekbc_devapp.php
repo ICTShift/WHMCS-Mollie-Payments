@@ -2,6 +2,11 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
+function molliekbc_devapp_MetaData()
+{
+    return mollie_metadata('Mollie KBC/CBC');
+}
+
 function molliekbc_devapp_config()
 {
     $config = mollie_config();
