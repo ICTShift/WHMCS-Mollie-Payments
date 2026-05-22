@@ -2,11 +2,6 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
-function mollieblik_devapp_MetaData()
-{
-    return mollie_metadata('Mollie BLIK');
-}
-
 function mollieblik_devapp_config()
 {
     $config = mollie_config();

@@ -9,25 +9,6 @@ The changes below were contributed by [ICT Shift](https://www.ictshift.com/) to 
 
 ## [Unreleased] – 2026-05-22
 
-### Added – Signed Next-Gen Webhooks (`src/mollie/mollie.php`, `src/mollie/callback.php`, `src/mollie/payment_webhook_events.php`)
-
-- **Added optional `Webhook signing secret` gateway setting.**  
-  Each Mollie gateway can now store a signing secret for Mollie's next-gen signed webhooks while keeping the existing API key configuration unchanged.
-
-- **Added dual webhook handling in `callback.php`.**  
-  The callback now accepts both the legacy payment-id webhook format and Mollie's signed JSON event payloads. Signed payloads are verified with `SignatureValidator`, mapped into payment events, and can use embedded metadata to resolve transactions without relying on a follow-up API fetch.
-
-- **Added local payment event classes for payment lifecycle events.**  
-  The vendored SDK currently documents next-gen webhooks and ships the generic webhook infrastructure, but does not expose dedicated payment event classes for this gateway's payment flow. This fork now provides those small event adapters locally so payment events can be processed through the v3 webhook mapper.
-
-- **Added setup and testing notes for next-gen webhooks.**  
-  A dedicated setup guide now documents the WHMCS and Mollie dashboard steps, and a small CLI simulator can generate or send signed next-gen payment webhook payloads for local verification.
-
-### Changed – Apps & Integrations Display Names (`src/*_devapp.php`, `src/mollie/mollie.php`)
-
-- **Added WHMCS gateway metadata display names for all Mollie gateway wrappers.**  
-  WHMCS Apps & Integrations previously fell back to the raw module filenames such as `Mollieideal Devapp`. Each gateway wrapper now exposes a `_MetaData()` function with a proper `DisplayName`, so the cards can show cleaner names like `Mollie iDEAL` and `Mollie Apple Pay`.
-
 ### Fixed – WHMCS 9.x Compatibility (`src/mollie/mollie.php`, `src/mollie/callback.php`)
 
 - **Migrated all database calls to `WHMCS\Database\Capsule`.**  
@@ -52,12 +33,6 @@ The changes below were contributed by [ICT Shift](https://www.ictshift.com/) to 
   Webhook log entries now use a nested structure (`['transaction' => ..., 'callback' => ...]`) to prevent key collisions between transaction fields and POST data.
 
 ### Changed
-
-- **New payments now carry a gateway hint in both metadata and webhook URL query parameters.**  
-  This allows the callback to target the correct configured Mollie gateway directly for newly created payments, instead of falling back to a broad scan across all configured Mollie API keys.
-
-- **Legacy callback input handling is narrower.**  
-  The callback now treats signed JSON payloads as the next-gen path and legacy payment callbacks as POST/body `id` deliveries only. This removes the old `GET id` fallback and keeps the broader gateway scan as a compatibility fallback for older deliveries only.
 
 ### Noted
 

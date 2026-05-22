@@ -2,11 +2,6 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
-function molliegiftcard_devapp_MetaData()
-{
-    return mollie_metadata('Mollie Gift Card');
-}
-
 function molliegiftcard_devapp_config()
 {
     $config = mollie_config();

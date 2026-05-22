@@ -2,11 +2,6 @@
 
 require_once __DIR__ . '/mollie/mollie.php';
 
-function molliepaybybank_devapp_MetaData()
-{
-    return mollie_metadata('Mollie Pay by Bank');
-}
-
 function molliepaybybank_devapp_config()
 {
     $config = mollie_config();
