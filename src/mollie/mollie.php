@@ -1,5 +1,7 @@
 <?php
 
+use WHMCS\Database\Capsule;
+
 require_once __DIR__ . '/vendor/autoload.php';
 
 function mollie_config()
@@ -14,7 +16,7 @@ function mollie_config()
     );
 }
 
-function mollie_link($params, $method = Mollie_API_Object_Method::IDEAL)
+function mollie_link($params, $method = \Mollie\Api\Types\PaymentMethod::IDEAL)
 {
     global $whmcs;
 
@@ -38,16 +40,20 @@ function mollie_link($params, $method = Mollie_API_Object_Method::IDEAL)
     /* @var array $_GATEWAYLANG */
     require __DIR__ . '/lang/' . $params['language'] . '.php';
 
-    $tableCheckQuery = full_query('SHOW TABLES LIKE \'gateway_mollie\'');
-
-    if (mysql_num_rows($tableCheckQuery) != 1) {
-        full_query('CREATE TABLE IF NOT EXISTS `gateway_mollie` (`id` int(11) NOT NULL AUTO_INCREMENT, `paymentid` varchar(64), `amount` double NOT NULL, `currencyid` int(11) NOT NULL, `ip` varchar(50) NOT NULL, `userid` int(11) NOT NULL, `invoiceid` int(11) NOT NULL, `status` ENUM(\'open\',\'paid\',\'closed\') NOT NULL DEFAULT \'open\', `method` VARCHAR(25) NOT NULL,  `created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, `updated` timestamp NULL DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `paymentid` (`paymentid`)) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;');
-    }
-
-    $paymentIdQuery = full_query("SHOW COLUMNS FROM `gateway_mollie` WHERE `Field` = 'paymentid' AND `Type` LIKE '%64%'");
-
-    if (mysql_num_rows($paymentIdQuery) == 0) {
-        full_query("ALTER TABLE `gateway_mollie` CHANGE `paymentid` `paymentid` VARCHAR(64);");
+    if (!Capsule::schema()->hasTable('gateway_mollie')) {
+        Capsule::schema()->create('gateway_mollie', function ($table) {
+            $table->increments('id');
+            $table->string('paymentid', 64)->nullable()->unique();
+            $table->double('amount');
+            $table->integer('currencyid');
+            $table->string('ip', 50);
+            $table->integer('userid');
+            $table->integer('invoiceid');
+            $table->enum('status', ['open', 'paid', 'closed'])->default('open');
+            $table->string('method', 25);
+            $table->timestamp('created')->useCurrent();
+            $table->timestamp('updated')->nullable();
+        });
     }
 
     $mollie = new \Mollie\Api\MollieApiClient();
@@ -59,61 +65,151 @@ function mollie_link($params, $method = Mollie_API_Object_Method::IDEAL)
      *
      */
     if (isset($_GET['check_payment']) && ctype_digit($_GET['check_payment'])) {
-        $transactionQuery = select_query('gateway_mollie', '', array('id' => $_GET['check_payment']), null, null, 1);
+        $transaction = Capsule::table('gateway_mollie')->where('id', (int) $_GET['check_payment'])->first();
 
-        if (mysql_num_rows($transactionQuery) != 1) {
+        if (!$transaction) {
             return '<p>' . $_GATEWAYLANG['errorTransactionNotFound'] . '</p>';
         }
 
-        $transaction = mysql_fetch_assoc($transactionQuery);
-
-        if ($transaction['status'] == 'paid') {
+        if ($transaction->status == 'paid') {
             header('location: ' . $params['returnurl'] . '&paymentsuccess=true');
             exit();
-        } else if ($transaction['status'] == 'closed') {
+        } else if ($transaction->status == 'closed') {
             header('location: ' . $params['returnurl'] . '&paymentfailed=true');
             exit();
         } else {
+            if (!empty($transaction->paymentid)) {
+                // DB hasn't been updated by webhook yet — poll Mollie directly.
+                try {
+                    $pollPayment = $mollie->payments->get($transaction->paymentid);
+
+                    if ($pollPayment->isPaid()) {
+                        Capsule::table('gateway_mollie')
+                            ->where('id', $transaction->id)
+                            ->update(['status' => 'paid', 'updated' => date('Y-m-d H:i:s')]);
+                        header('location: ' . $params['returnurl'] . '&paymentsuccess=true');
+                        exit();
+                    } else if (!$pollPayment->isOpen()) {
+                        Capsule::table('gateway_mollie')
+                            ->where('id', $transaction->id)
+                            ->update(['status' => 'closed', 'updated' => date('Y-m-d H:i:s')]);
+                        header('location: ' . $params['returnurl'] . '&paymentfailed=true');
+                        exit();
+                    }
+                } catch (\Throwable $e) {
+                    // Mollie unreachable — keep spinning.
+                }
+            }
+
             return '<br/><img src="' . $params['systemurl'] . 'modules/gateways/mollie/ajax_loader.gif" /><br/>' . $_GATEWAYLANG['checkPayment'] . ' <script> window.onload = function(){ setTimeout("location.reload(true);", 2000); } </script>';
         }
     } else {
-        if (isset($_POST['start']) || isset($_POST['issuer']) || (isset($_GET['a']) && $_GET['a'] == 'complete') || (isset($_GET['action']) && ($_GET['action'] == 'addfunds' || $_GET['action'] == 'masspay') && isset($_POST['paymentmethod']) && $_POST['paymentmethod'] == 'mollie' . $method)) {
+        $isAddFundsOrMassPayStart = isset($_GET['action'])
+            && ($_GET['action'] == 'addfunds' || $_GET['action'] == 'masspay')
+            && isset($_POST['paymentmethod'])
+            && $_POST['paymentmethod'] == 'mollie' . $method;
 
-            $transactionCurrency = select_query('tblcurrencies', '', array('code' => $params['currency']), null, null, 1);
-            $transactionCurrency = mysql_fetch_assoc($transactionCurrency);
+        if (isset($_POST['start']) || isset($_POST['issuer']) || $isAddFundsOrMassPayStart) {
 
-            $transactionId = insert_query('gateway_mollie', array(
-                'amount' => $params['amount'],
-                'currencyid' => $transactionCurrency['id'],
-                'ip' => $_SERVER['REMOTE_ADDR'],
-                'userid' => $params['clientdetails']['userid'],
-                'invoiceid' => $params['invoiceid'],
-                'method' => $method
-            ));
+            $existingTransaction = Capsule::table('gateway_mollie')
+                ->where('invoiceid', (int) $params['invoiceid'])
+                ->where('userid', (int) $params['clientdetails']['userid'])
+                ->where('method', $method)
+                ->where('status', 'open')
+                ->orderBy('id', 'desc')
+                ->first();
 
-            $payment = $mollie->payments->create(array(
+            if ($existingTransaction && !empty($existingTransaction->paymentid)) {
+                try {
+                    $existingPayment = $mollie->payments->get($existingTransaction->paymentid);
+
+                    if ($existingPayment->isOpen()) {
+                        header('Location: ' . $existingPayment->getCheckoutUrl());
+                        exit();
+                    }
+
+                    if (!$existingPayment->isPaid()) {
+                        Capsule::table('gateway_mollie')
+                            ->where('id', $existingTransaction->id)
+                            ->update(['status' => 'closed', 'updated' => date('Y-m-d H:i:s')]);
+                    }
+                } catch (\Throwable $e) {
+                    // If we can't resolve prior payment state, continue and create a new payment.
+                }
+            }
+
+            $transactionCurrency = Capsule::table('tblcurrencies')->where('code', $params['currency'])->first();
+            $resolvedCurrencyId = $transactionCurrency ? (int) $transactionCurrency->id : 0;
+
+            if ($resolvedCurrencyId === 0) {
+                $userCurrency = getCurrency((int) $params['clientdetails']['userid']);
+                if (is_array($userCurrency) && isset($userCurrency['id']) && ctype_digit((string) $userCurrency['id'])) {
+                    $resolvedCurrencyId = (int) $userCurrency['id'];
+                }
+            }
+
+            if ($resolvedCurrencyId === 0) {
+                logTransaction(
+                    isset($params['paymentmethod']) ? $params['paymentmethod'] : ('mollie' . $method . '_devapp'),
+                    array('invoiceid' => $params['invoiceid'], 'currency' => $params['currency']),
+                    'Link - Failure (Unable to resolve currencyid)'
+                );
+
+                return '<p>Unable to determine invoice currency for this payment.</p>';
+            }
+
+            $transactionId = Capsule::table('gateway_mollie')->insertGetId([
+                'amount'     => $params['amount'],
+                'currencyid' => $resolvedCurrencyId,
+                'ip'         => isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '',
+                'userid'     => $params['clientdetails']['userid'],
+                'invoiceid'  => $params['invoiceid'],
+                'method'     => $method,
+            ]);
+
+            $paymentData = array(
                 'amount' => [
-                    'value' => $params['amount'],
+                    'value' => number_format((float) $params['amount'], 2, '.', ''),
                     'currency' => $params['currency'],
                 ],
-                'method' => $method,
                 'description' => $params['description'],
                 'redirectUrl' => $params['returnurl'] . '&check_payment=' . $transactionId,
-                'webhookUrl' => $params['systemurl'] . '/modules/gateways/mollie/callback.php',
+                'webhookUrl' => $params['systemurl'] . '/modules/gateways/mollie/callback.php?transaction_id=' . $transactionId,
                 'metadata' => array(
                     'invoice_id' => $params['invoiceid'],
+                    'transaction_id' => $transactionId,
                 ),
-                'dueDate' => (($method == \Mollie\Api\Types\PaymentMethod::BANKTRANSFER) ? date('Y-m-d', strtotime('+100 days')) : NULL),
-            ));
+            );
 
-            update_query('gateway_mollie', array('paymentid' => $payment->id), array('id' => $transactionId));
+            if (!empty($method)) {
+                $paymentData['method'] = $method;
+            }
+
+            if ($method == \Mollie\Api\Types\PaymentMethod::BANKTRANSFER) {
+                $paymentData['dueDate'] = date('Y-m-d', strtotime('+100 days'));
+            }
+
+            try {
+                $payment = $mollie->payments->create($paymentData);
+            } catch (\Mollie\Api\Exceptions\ApiException $e) {
+                Capsule::table('gateway_mollie')->where('id', $transactionId)->whereNull('paymentid')->delete();
+                return '<p>' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . '</p>';
+            }
+
+            Capsule::table('gateway_mollie')->where('id', $transactionId)->update(['paymentid' => $payment->id]);
 
             header('Location: ' . $payment->getCheckoutUrl());
             exit();
         } else {
             $return = '<form action="viewinvoice.php?id=' . $params['invoiceid'] . '" method="POST">';
 
-            $return .= '<input type="submit" name="start" value="' . $_GATEWAYLANG['payWith' . ucfirst($method)] . '" /></form>';
+            $methodLabelKey = !empty($method) ? ('payWith' . ucfirst($method)) : 'payWith';
+
+            if (!isset($_GATEWAYLANG[$methodLabelKey])) {
+                $methodLabelKey = 'payWith';
+            }
+
+            $return .= '<input type="submit" name="start" value="' . $_GATEWAYLANG[$methodLabelKey] . '" /></form>';
 
             return $return;
         }
