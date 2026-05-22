@@ -3,9 +3,14 @@ Unofficial Mollie Payments gateway for WHMCS. This free gateway does NOT support
 
 Compatible with **all** WHMCS versions that are [supported by WHMCS](https://docs.whmcs.com/Long_Term_Support#WHMCS_Version_.26_LTS_Schedule).
 
+### Fork Maintenance
+This fork is maintained by [ICT Shift](https://www.ictshift.com/) and includes maintenance work focused on newer WHMCS versions, including WHMCS 9.x compatibility fixes validated against WHMCS 9.0.4.
+
+Original project credit remains with [0100Dev](https://github.com/0100Dev/WHMCS-Mollie-Payments). Fork-specific changes are tracked in [CHANGELOG.md](CHANGELOG.md).
+
 ### Installation
 + Log in to your (s)FTP.
-+ Download the `WHMCS-Mollie-Payments.zip` from the [releases page](https://github.com/0100Dev/WHMCS-Mollie/releases) (**PLEASE NOTE:** **not** `Source code (zip)` or `Source code (tar.gz)`!).
++ Download the `WHMCS-Mollie-Payments.zip` from the [releases page](https://github.com/ICTShift/WHMCS-Mollie-Payments/releases) (**PLEASE NOTE:** **not** `Source code (zip)` or `Source code (tar.gz)`!).
 + Upload all the files from the `src` folder to the `/modules/gateways` folder in your WHMCS installation.
 
 ### Payment Methodes
