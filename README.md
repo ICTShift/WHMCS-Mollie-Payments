@@ -22,6 +22,8 @@ This fork supports both Mollie's legacy payment webhooks and Mollie's newer sign
 
 New payments now include both `transaction_id` and `gateway` metadata, which lets the callback resolve the correct WHMCS transaction and gateway more directly.
 
+Full setup steps are in [docs/WEBHOOK-SETUP.md](docs/WEBHOOK-SETUP.md). A local simulator for signed test deliveries is available in [tools/simulate-mollie-webhook.php](tools/simulate-mollie-webhook.php).
+
 ### Payment Methodes
 All payment methods from Mollie are supported (which is also supported by their API). Enable the desired payment methods by activating the gateway in WHMCS.
 

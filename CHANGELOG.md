@@ -20,6 +20,9 @@ The changes below were contributed by [ICT Shift](https://www.ictshift.com/) to 
 - **Added local payment event classes for payment lifecycle events.**  
   The vendored SDK currently documents next-gen webhooks and ships the generic webhook infrastructure, but does not expose dedicated payment event classes for this gateway's payment flow. This fork now provides those small event adapters locally so payment events can be processed through the v3 webhook mapper.
 
+- **Added setup and testing notes for next-gen webhooks.**  
+  A dedicated setup guide now documents the WHMCS and Mollie dashboard steps, and a small CLI simulator can generate or send signed next-gen payment webhook payloads for local verification.
+
 ### Fixed – WHMCS 9.x Compatibility (`src/mollie/mollie.php`, `src/mollie/callback.php`)
 
 - **Migrated all database calls to `WHMCS\Database\Capsule`.**  
