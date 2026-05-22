@@ -12,6 +12,12 @@ function mollie_config()
             'Type' => 'text',
             'Size' => '35',
             'Description' => 'Your channels API key.'
+        ),
+        'webhook_signing_secret' => array(
+            'FriendlyName' => 'Webhook signing secret',
+            'Type' => 'text',
+            'Size' => '80',
+            'Description' => 'Optional. Required only when using Mollie next-gen signed webhooks.'
         )
     );
 }
@@ -167,6 +173,10 @@ function mollie_link($params, $method = \Mollie\Api\Types\PaymentMethod::IDEAL)
                 'method'     => $method,
             ]);
 
+            $gatewayName = isset($params['paymentmethod']) && is_string($params['paymentmethod'])
+                ? $params['paymentmethod']
+                : ('mollie' . $method . '_devapp');
+
             $paymentData = array(
                 'amount' => [
                     'value' => number_format((float) $params['amount'], 2, '.', ''),
@@ -174,10 +184,11 @@ function mollie_link($params, $method = \Mollie\Api\Types\PaymentMethod::IDEAL)
                 ],
                 'description' => $params['description'],
                 'redirectUrl' => $params['returnurl'] . '&check_payment=' . $transactionId,
-                'webhookUrl' => $params['systemurl'] . '/modules/gateways/mollie/callback.php?transaction_id=' . $transactionId,
+                'webhookUrl' => $params['systemurl'] . '/modules/gateways/mollie/callback.php?transaction_id=' . $transactionId . '&gateway=' . rawurlencode($gatewayName),
                 'metadata' => array(
                     'invoice_id' => $params['invoiceid'],
                     'transaction_id' => $transactionId,
+                    'gateway' => $gatewayName,
                 ),
             );
 

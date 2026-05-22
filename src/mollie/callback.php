@@ -8,30 +8,153 @@ require_once __DIR__ . '/../../../init.php';
 require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
 require_once __DIR__ . '/../../../includes/invoicefunctions.php';
 require_once __DIR__ . '/vendor/autoload.php';
+require_once __DIR__ . '/payment_webhook_events.php';
 
 use WHMCS\Database\Capsule;
+use Mollie\Api\Exceptions\InvalidSignatureException;
+use Mollie\Api\Webhooks\SignatureValidator;
+use Mollie\Api\Webhooks\WebhookEventMapper;
+use WHMCSMollie\WebhookEvents\PaymentAuthorized;
+use WHMCSMollie\WebhookEvents\PaymentCanceled;
+use WHMCSMollie\WebhookEvents\PaymentExpired;
+use WHMCSMollie\WebhookEvents\PaymentFailed;
+use WHMCSMollie\WebhookEvents\PaymentPaid;
 
-function mollie_resolve_transaction_from_mollie($paymentId)
+function mollie_is_valid_payment_id($paymentId)
 {
-    $configuredGateways = Capsule::table('tblpaymentgateways')
-        ->select(['gateway', 'value'])
-        ->where('setting', 'key')
-        ->where('gateway', 'like', 'mollie%_devapp')
-        ->where('value', '!=', '')
+    return is_string($paymentId)
+        && preg_match('/^tr_[A-Za-z0-9]+$/', $paymentId) === 1;
+}
+
+function mollie_normalize_gateway_name($gatewayName)
+{
+    if (!is_string($gatewayName)) {
+        return null;
+    }
+
+    $gatewayName = trim($gatewayName);
+
+    if ($gatewayName === '' || preg_match('/^mollie[a-z0-9]+_devapp$/', $gatewayName) !== 1) {
+        return null;
+    }
+
+    return $gatewayName;
+}
+
+function mollie_extract_metadata_values($metadata)
+{
+    $values = array(
+        'transaction_id' => null,
+        'gateway' => null,
+    );
+
+    if (is_array($metadata)) {
+        if (isset($metadata['transaction_id']) && ctype_digit((string) $metadata['transaction_id'])) {
+            $values['transaction_id'] = (int) $metadata['transaction_id'];
+        }
+
+        if (isset($metadata['gateway'])) {
+            $values['gateway'] = mollie_normalize_gateway_name($metadata['gateway']);
+        }
+    } else if (is_object($metadata)) {
+        if (isset($metadata->transaction_id) && ctype_digit((string) $metadata->transaction_id)) {
+            $values['transaction_id'] = (int) $metadata->transaction_id;
+        }
+
+        if (isset($metadata->gateway)) {
+            $values['gateway'] = mollie_normalize_gateway_name($metadata->gateway);
+        }
+    }
+
+    return $values;
+}
+
+function mollie_get_gateway_credentials($gatewayName)
+{
+    $gatewayName = mollie_normalize_gateway_name($gatewayName);
+
+    if (!$gatewayName) {
+        return null;
+    }
+
+    $gatewayRows = Capsule::table('tblpaymentgateways')
+        ->select(['setting', 'value'])
+        ->where('gateway', $gatewayName)
+        ->whereIn('setting', ['key', 'webhook_signing_secret'])
         ->get();
 
-    foreach ($configuredGateways as $configuredGateway) {
+    if ($gatewayRows->isEmpty()) {
+        return null;
+    }
+
+    $credentials = array(
+        'gateway' => $gatewayName,
+        'key' => '',
+        'webhook_signing_secret' => '',
+    );
+
+    foreach ($gatewayRows as $gatewayRow) {
+        $credentials[$gatewayRow->setting] = is_string($gatewayRow->value) ? trim($gatewayRow->value) : '';
+    }
+
+    return $credentials;
+}
+
+function mollie_get_candidate_gateways($preferredGatewayName = null)
+{
+    $candidateGateways = array();
+    $preferredGatewayName = mollie_normalize_gateway_name($preferredGatewayName);
+
+    if ($preferredGatewayName) {
+        $preferredGateway = mollie_get_gateway_credentials($preferredGatewayName);
+
+        if ($preferredGateway && $preferredGateway['key'] !== '') {
+            $candidateGateways[] = $preferredGateway;
+        }
+    }
+
+    if (!empty($candidateGateways)) {
+        return $candidateGateways;
+    }
+
+    $configuredGateways = Capsule::table('tblpaymentgateways')
+        ->select(['gateway', 'setting', 'value'])
+        ->where('gateway', 'like', 'mollie%_devapp')
+        ->whereIn('setting', ['key', 'webhook_signing_secret'])
+        ->get()
+        ->groupBy('gateway');
+
+    foreach ($configuredGateways as $gatewayName => $gatewayRows) {
+        $credentials = array(
+            'gateway' => $gatewayName,
+            'key' => '',
+            'webhook_signing_secret' => '',
+        );
+
+        foreach ($gatewayRows as $gatewayRow) {
+            $credentials[$gatewayRow->setting] = is_string($gatewayRow->value) ? trim($gatewayRow->value) : '';
+        }
+
+        if ($credentials['key'] !== '') {
+            $candidateGateways[] = $credentials;
+        }
+    }
+
+    return $candidateGateways;
+}
+
+function mollie_resolve_transaction_from_mollie($paymentId, $preferredGatewayName = null)
+{
+    foreach (mollie_get_candidate_gateways($preferredGatewayName) as $configuredGateway) {
         try {
             $mollie = new \Mollie\Api\MollieApiClient();
-            $mollie->setApiKey($configuredGateway->value);
+            $mollie->setApiKey($configuredGateway['key']);
             $payment = $mollie->payments->get($paymentId);
 
-            $metadata = isset($payment->metadata) ? $payment->metadata : null;
+            $metadata = mollie_extract_metadata_values(isset($payment->metadata) ? $payment->metadata : null);
 
-            if (is_array($metadata) && isset($metadata['transaction_id']) && ctype_digit((string) $metadata['transaction_id'])) {
-                $transaction = Capsule::table('gateway_mollie')->where('id', (int) $metadata['transaction_id'])->first();
-            } else if (is_object($metadata) && isset($metadata->transaction_id) && ctype_digit((string) $metadata->transaction_id)) {
-                $transaction = Capsule::table('gateway_mollie')->where('id', (int) $metadata->transaction_id)->first();
+            if ($metadata['transaction_id'] !== null) {
+                $transaction = Capsule::table('gateway_mollie')->where('id', $metadata['transaction_id'])->first();
             } else {
                 $transaction = null;
             }
@@ -44,7 +167,7 @@ function mollie_resolve_transaction_from_mollie($paymentId)
 
                 return array(
                     'transaction' => $transaction,
-                    'gateway' => $configuredGateway->gateway,
+                    'gateway' => $configuredGateway['gateway'],
                     'payment' => $payment,
                 );
             }
@@ -56,6 +179,67 @@ function mollie_resolve_transaction_from_mollie($paymentId)
     return null;
 }
 
+function mollie_get_request_signature_headers()
+{
+    $headers = array();
+
+    if (isset($_SERVER['HTTP_X_MOLLIE_SIGNATURE']) && is_string($_SERVER['HTTP_X_MOLLIE_SIGNATURE'])) {
+        $headers[] = trim($_SERVER['HTTP_X_MOLLIE_SIGNATURE']);
+    }
+
+    if (function_exists('getallheaders')) {
+        foreach (getallheaders() as $headerName => $headerValue) {
+            if (strcasecmp($headerName, SignatureValidator::SIGNATURE_HEADER) === 0) {
+                if (is_array($headerValue)) {
+                    foreach ($headerValue as $singleValue) {
+                        if (is_string($singleValue) && trim($singleValue) !== '') {
+                            $headers[] = trim($singleValue);
+                        }
+                    }
+                } else if (is_string($headerValue) && trim($headerValue) !== '') {
+                    $headers[] = trim($headerValue);
+                }
+            }
+        }
+    }
+
+    return array_values(array_unique(array_filter($headers)));
+}
+
+function mollie_parse_nextgen_payload($rawInput)
+{
+    if (!is_string($rawInput) || trim($rawInput) === '') {
+        return null;
+    }
+
+    $payload = json_decode($rawInput, true);
+
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    $requiredFields = array('id', 'type', 'entityId', 'createdAt');
+
+    foreach ($requiredFields as $requiredField) {
+        if (!isset($payload[$requiredField]) || !is_string($payload[$requiredField]) || trim($payload[$requiredField]) === '') {
+            return null;
+        }
+    }
+
+    return $payload;
+}
+
+function mollie_payment_event_map()
+{
+    return array(
+        PaymentPaid::type() => PaymentPaid::class,
+        PaymentAuthorized::type() => PaymentAuthorized::class,
+        PaymentCanceled::type() => PaymentCanceled::class,
+        PaymentExpired::type() => PaymentExpired::class,
+        PaymentFailed::type() => PaymentFailed::class,
+    );
+}
+
 /**
  *
  *    Check parameters
@@ -64,16 +248,18 @@ function mollie_resolve_transaction_from_mollie($paymentId)
 if (true) {
 
     $rawInput = file_get_contents('php://input');
+    $nextGenPayload = mollie_parse_nextgen_payload($rawInput);
+    $signatureHeaders = mollie_get_request_signature_headers();
     $parsedBody = array();
-    if (!empty($rawInput)) {
+    if ($nextGenPayload === null && !empty($rawInput)) {
         parse_str($rawInput, $parsedBody);
     }
 
-    $paymentId = '';
-    if (isset($_POST['id']) && is_string($_POST['id'])) {
+    $paymentId = null;
+    if ($nextGenPayload !== null) {
+        $paymentId = trim($nextGenPayload['entityId']);
+    } else if (isset($_POST['id']) && is_string($_POST['id'])) {
         $paymentId = trim($_POST['id']);
-    } else if (isset($_GET['id']) && is_string($_GET['id'])) {
-        $paymentId = trim($_GET['id']);
     } else if (isset($parsedBody['id']) && is_string($parsedBody['id'])) {
         $paymentId = trim($parsedBody['id']);
     }
@@ -83,7 +269,85 @@ if (true) {
         $transactionIdHint = (int) $_GET['transaction_id'];
     }
 
-    if ($paymentId === '') {
+    $gatewayHint = null;
+    if (isset($_GET['gateway'])) {
+        $gatewayHint = mollie_normalize_gateway_name($_GET['gateway']);
+    }
+
+    $resolvedPayment = null;
+    $resolvedGatewayName = null;
+
+    if ($nextGenPayload !== null) {
+        $nextGenMetadata = array(
+            'transaction_id' => null,
+            'gateway' => null,
+        );
+
+        if (isset($nextGenPayload['_embedded']['entity']['metadata'])) {
+            $nextGenMetadata = mollie_extract_metadata_values($nextGenPayload['_embedded']['entity']['metadata']);
+        }
+
+        if ($nextGenMetadata['transaction_id'] !== null) {
+            $transactionIdHint = $nextGenMetadata['transaction_id'];
+        }
+
+        if ($gatewayHint === null && $nextGenMetadata['gateway'] !== null) {
+            $gatewayHint = $nextGenMetadata['gateway'];
+        }
+
+        $signatureCandidates = array();
+        foreach (mollie_get_candidate_gateways($gatewayHint) as $candidateGateway) {
+            if ($candidateGateway['webhook_signing_secret'] !== '') {
+                $signatureCandidates[$candidateGateway['gateway']] = $candidateGateway['webhook_signing_secret'];
+            }
+        }
+
+        if (empty($signatureHeaders)) {
+            logTransaction($gatewayHint ?: 'mollieunknown', array('payload' => $nextGenPayload), 'Callback - Failure (Missing webhook signature)');
+
+            header('HTTP/1.1 400 Missing webhook signature');
+            exit();
+        }
+
+        if (empty($signatureCandidates)) {
+            logTransaction($gatewayHint ?: 'mollieunknown', array('payload' => $nextGenPayload), 'Callback - Failure (Webhook signing secret not configured)');
+
+            header('HTTP/1.1 500 Webhook signing secret not configured');
+            exit();
+        }
+
+        try {
+            (new SignatureValidator(array_values($signatureCandidates)))->validatePayload($rawInput, $signatureHeaders);
+            $event = (new WebhookEventMapper(mollie_payment_event_map()))->processPayload($nextGenPayload, $signatureHeaders[0]);
+        } catch (InvalidSignatureException $e) {
+            logTransaction($gatewayHint ?: 'mollieunknown', array('payload' => $nextGenPayload, 'error' => $e->getMessage()), 'Callback - Failure (Invalid webhook signature)');
+
+            header('HTTP/1.1 400 Invalid webhook signature');
+            exit();
+        } catch (\InvalidArgumentException $e) {
+            logTransaction($gatewayHint ?: 'mollieunknown', array('payload' => $nextGenPayload, 'error' => $e->getMessage()), 'Callback - Ignored (Unsupported next-gen webhook)');
+
+            header('HTTP/1.1 200 OK');
+            exit();
+        }
+
+        if (!mollie_is_valid_payment_id($paymentId)) {
+            logTransaction($gatewayHint ?: 'mollieunknown', array('payload' => $nextGenPayload), 'Callback - Ignored (Unsupported entity ID)');
+
+            header('HTTP/1.1 200 OK');
+            exit();
+        }
+
+        if ($gatewayHint !== null) {
+            $resolvedGatewayName = $gatewayHint;
+        }
+
+        if ($event->entity !== null) {
+            $resolvedPayment = $event;
+        }
+    }
+
+    if (!mollie_is_valid_payment_id($paymentId)) {
         logTransaction('mollieunknown', array('post' => $_POST, 'get' => $_GET, 'body' => $parsedBody), 'Callback - Failure 0 (Arg mismatch)');
 
         header('HTTP/1.1 500 Arg mismatch');
@@ -106,11 +370,8 @@ if (true) {
         $transaction = Capsule::table('gateway_mollie')->where('paymentid', $paymentId)->first();
     }
 
-    $resolvedGatewayName = null;
-    $resolvedPayment = null;
-
     if (!$transaction) {
-        $resolved = mollie_resolve_transaction_from_mollie($paymentId);
+        $resolved = mollie_resolve_transaction_from_mollie($paymentId, $gatewayHint ?: $resolvedGatewayName);
 
         if ($resolved) {
             $transaction = $resolved['transaction'];
@@ -120,9 +381,9 @@ if (true) {
     }
 
     if (!$transaction) {
-        logTransaction('mollieunknown', array('id' => $paymentId, 'transaction_id' => $transactionIdHint, 'post' => $_POST, 'get' => $_GET), 'Callback v9.0.4 - Failure 2 (Transaction not found)');
+        logTransaction($gatewayHint ?: 'mollieunknown', array('id' => $paymentId, 'transaction_id' => $transactionIdHint, 'post' => $_POST, 'get' => $_GET), 'Callback v9.0.4 - Failure 2 (Transaction not found)');
 
-        header('HTTP/1.1 500 Transaction not found');
+        header('HTTP/1.1 200 OK');
         exit();
     }
 
@@ -154,10 +415,19 @@ if (true) {
 
     // Check payment
     $mollie = new \Mollie\Api\MollieApiClient();
-    $mollie->setApiKey($_GATEWAY['key']);
+
+    if (!empty($_GATEWAY['key'])) {
+        $mollie->setApiKey($_GATEWAY['key']);
+    }
 
     try {
-        $payment = $resolvedPayment ? $resolvedPayment : $mollie->payments->get($paymentId);
+        if ($resolvedPayment instanceof \Mollie\Api\Webhooks\Events\BaseEvent && $resolvedPayment->entity !== null) {
+            $payment = $resolvedPayment->asResource($mollie);
+        } else if ($resolvedPayment) {
+            $payment = $resolvedPayment;
+        } else {
+            $payment = $mollie->payments->get($paymentId);
+        }
     } catch (\Throwable $e) {
         logTransaction($_GATEWAY['paymentmethod'], array('id' => $paymentId, 'error' => $e->getMessage()), 'Callback - Failure 5 (Unable to fetch payment)');
 

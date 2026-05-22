@@ -13,6 +13,15 @@ Original project credit remains with [0100Dev](https://github.com/0100Dev/WHMCS-
 + Download the `WHMCS-Mollie-Payments.zip` from the [releases page](https://github.com/ICTShift/WHMCS-Mollie-Payments/releases) (**PLEASE NOTE:** **not** `Source code (zip)` or `Source code (tar.gz)`!).
 + Upload all the files from the `src` folder to the `/modules/gateways` folder in your WHMCS installation.
 
+### Webhooks
+This fork supports both Mollie's legacy payment webhooks and Mollie's newer signed next-gen webhooks.
+
++ Legacy mode keeps working with the per-payment `webhookUrl` sent during payment creation.
++ Next-gen mode can be enabled by configuring a Mollie webhook that points to the same `callback.php` endpoint and by filling in the optional `Webhook signing secret` field in each active Mollie gateway inside WHMCS.
++ For best results with next-gen webhooks, subscribe to full payloads so the callback can resolve the transaction directly from signed metadata without extra API lookups.
+
+New payments now include both `transaction_id` and `gateway` metadata, which lets the callback resolve the correct WHMCS transaction and gateway more directly.
+
 ### Payment Methodes
 All payment methods from Mollie are supported (which is also supported by their API). Enable the desired payment methods by activating the gateway in WHMCS.
 
